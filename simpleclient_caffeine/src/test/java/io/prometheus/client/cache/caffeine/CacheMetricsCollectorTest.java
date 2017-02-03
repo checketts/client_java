@@ -11,6 +11,7 @@ import io.prometheus.client.cache.caffeine.CacheMetricsCollector;
 import org.junit.Test;
 
 
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -25,7 +26,13 @@ public class CacheMetricsCollectorTest {
     @Test
     public void cacheExposesMetricsForHitMissAndEviction() throws Exception {
         final AtomicInteger removalsOccured = new AtomicInteger();
-        Cache<String, String> cache = Caffeine.newBuilder().maximumSize(2)
+        Cache<String, String> cache = Caffeine.newBuilder().executor(new Executor() {
+            @Override
+            public void execute(Runnable command) {
+                // Run cleanup in same thread, to remove async behavior with evictions
+                command.run();
+            }
+        }).maximumSize(2)
                 .removalListener(new RemovalListener<Object, Object>() {
                     @Override
                     public void onRemoval(Object key, Object value, RemovalCause cause) {
@@ -49,17 +56,7 @@ public class CacheMetricsCollectorTest {
 
         assertThat(registry.getSampleValue("myapp_users_cache_hit_total")).isEqualTo(1.0);
         assertThat(registry.getSampleValue("myapp_users_cache_miss_total")).isEqualTo(2.0);
-
-        waitForEvitionToComplete(removalsOccured, 2);
         assertThat(registry.getSampleValue("myapp_users_cache_eviction_total")).isEqualTo(2.0);
-    }
-
-    private void waitForEvitionToComplete(AtomicInteger removalsOccured, int desiredRemovals) throws InterruptedException {
-        int waits = 0;
-        while(removalsOccured.get() < desiredRemovals && waits < 10) {
-            Thread.sleep(5);
-            waits++;
-        }
     }
 
     @SuppressWarnings("unchecked")
